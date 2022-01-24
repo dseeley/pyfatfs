@@ -233,6 +233,10 @@ class PyFat(object):
         # Parse BPB & FAT headers of given file
         self.parse_header()
 
+        if self.fat_type == self.FAT_TYPE_FAT32:
+            # Handle FSInfo struct
+            raise ValueError(self.__fp.tell())
+
         # Parse FAT
         self._parse_fat()
 
@@ -1019,3 +1023,82 @@ class PyFat(object):
         pf.open(filename)
         yield pf
         pf.close()
+
+    def mkfs(self, filename: str, size: int = None,
+             fat_type: Union["PyFat.FAT_TYPE_FAT12",
+                             "PyFat.FAT_TYPE_FAT16",
+                             "PyFat.FAT_TYPE_FAT32"] = None,
+             sector_size: int = 512,
+             number_of_fats: int = 2):
+        """Create a new FAT filesystem.
+
+        :param filename: `str`: Name of file to create filesystem in
+        :param size: `int`: Size of new filesystem in bytes
+        :param fat_type: `FAT_TYPE_FAT{12,16,32}`: FAT type
+        :param sector_size: `int`: Size of a sector in bytes
+        :param number_of_fats: `int`: Number of FATs on the disk
+        """
+        self.is_read_only = False
+        self.__set_fp(open(filename, mode='ab+'))
+
+        if size is None:
+            size = self.__fp_offset - self.__fp.seek(-1)
+
+        if sector_size < 512:
+            raise ValueError("Sector size cannot be less than 512")
+        elif sector_size % 2 != 0:
+            raise ValueError("Sector size must be a power of two")
+        num_sec = size // sector_size
+        sec_per_clus = num_sec // fat_type
+
+        self.bpb_header = {
+            "BS_jmpBoot": None,
+            "BS_OEMName": "MSWIN4.1",
+            "BPB_BytsPerSec": sector_size,
+            "BPB_SecPerClus": sec_per_clus,
+            "BPB_RsvdSecCnt": None,
+            "BPB_NumFATS": number_of_fats,
+            "BPB_RootEntCnt": None,
+            "BPB_TotSec16": None,
+            "BPB_Media": 0xF8,
+            "BPB_FATSz16": None,
+            "BPB_SecPerTrk": 0,
+            "BPB_NumHeads": 0,
+            "BPB_HiddSec": 0,
+            "BPB_TotSec32": None
+        }
+
+        if fat_type in [self.FAT_TYPE_FAT12, self.FAT_TYPE_FAT16]:
+            self.fat_header = {
+                "BS_DrvNum": None,
+                "BS_Reserved1": 0,
+                "BS_BootSig": None,
+                "BS_VolID": None,
+                "BS_VolLab": None,
+                "BS_FilSysType": None
+            }
+        elif fat_type == self.FAT_TYPE_FAT32:
+            self.fat_header = {
+                "BPB_FATSz32": None,
+                "BPB_ExtFlags": None,
+                "BPB_FSVer": None,
+                "BPB_RootClus": None,
+                "BPB_FSInfo": None,
+                "BPB_BkBootSec": None,
+                "BPB_Reserved": None,
+                "BS_DrvNum": None,
+                "BS_Reserved1": None,
+                "BS_BootSig": None,
+                "BS_VolID": None,
+                "BS_VolLab": None,
+                "BS_FilSysType": None
+            }
+        else:
+            raise TypeError(f"Invalid filesystem type '{type}'")
+
+        # Pseudocode
+        self.fat[0] = self.bpb_header["BPB_Media"]
+
+        # TODO: if size < len(hdrs) -> ENOSPC
+
+        assert size, type
